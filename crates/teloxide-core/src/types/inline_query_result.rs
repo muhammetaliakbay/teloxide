@@ -326,7 +326,7 @@ mod tests {
     fn audio_min() {
         let structure = InlineQueryResult::Audio(InlineQueryResultAudio {
             id: String::from("id"),
-            audio_url: reqwest::Url::parse("http://audio_url/").unwrap(),
+            audio_url: url::Url::parse("http://audio_url/").unwrap(),
             title: String::from("title"),
             caption: None,
             parse_mode: None,
@@ -349,7 +349,7 @@ mod tests {
     fn audio_full() {
         let structure = InlineQueryResult::Audio(InlineQueryResultAudio {
             id: String::from("id"),
-            audio_url: reqwest::Url::parse("http://audio_url/").unwrap(),
+            audio_url: url::Url::parse("http://audio_url/").unwrap(),
             title: String::from("title"),
             caption: Some(String::from("caption")),
             parse_mode: Some(ParseMode::Html),
@@ -439,7 +439,7 @@ mod tests {
             caption: None,
             parse_mode: None,
             caption_entities: None,
-            document_url: reqwest::Url::parse("http://document_url/").unwrap(),
+            document_url: url::Url::parse("http://document_url/").unwrap(),
             mime_type: Mime::from_str("application/pdf").unwrap(),
             description: None,
             reply_markup: None,
@@ -464,7 +464,7 @@ mod tests {
             caption: Some(String::from("caption")),
             parse_mode: Some(ParseMode::Html),
             caption_entities: None,
-            document_url: reqwest::Url::parse("http://document_url/").unwrap(),
+            document_url: url::Url::parse("http://document_url/").unwrap(),
             mime_type: Mime::from_str("application/pdf").unwrap(),
             description: Some(String::from("description")),
             reply_markup: Some(InlineKeyboardMarkup::default()),
@@ -480,7 +480,7 @@ mod tests {
                     show_above_text: false,
                 }),
             })),
-            thumbnail_url: Some(reqwest::Url::parse("http://thumb_url/").unwrap()),
+            thumbnail_url: Some(url::Url::parse("http://thumb_url/").unwrap()),
             thumbnail_width: Some(1),
             thumbnail_height: Some(1),
         });

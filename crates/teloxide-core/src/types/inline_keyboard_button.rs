@@ -24,7 +24,7 @@ pub enum InlineKeyboardButtonKind {
     /// their privacy settings. This will only work in Telegram versions
     /// released after December 7, 2021. Older clients will display _unsupported
     /// message_.
-    Url(reqwest::Url),
+    Url(url::Url),
 
     /// An HTTPS URL used to automatically authorize the user. Can be used as a
     /// replacement for the [Telegram Login Widget].
@@ -108,7 +108,7 @@ impl InlineKeyboardButton {
     /// Constructor for `InlineKeyboardButton` with [`Url`] kind.
     ///
     /// [`Url`]: InlineKeyboardButtonKind::Url
-    pub fn url<T>(text: T, url: reqwest::Url) -> Self
+    pub fn url<T>(text: T, url: url::Url) -> Self
     where
         T: Into<String>,
     {

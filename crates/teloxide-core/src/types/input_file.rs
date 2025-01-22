@@ -1,11 +1,10 @@
 use bytes::{Bytes, BytesMut};
 use futures::{
-    future::{ready, Either},
-    stream,
+    future::ready,
+    stream::{self, once},
 };
 use once_cell::sync::OnceCell;
 use rc_box::ArcBox;
-use reqwest::{multipart::Part, Body};
 use serde::Serialize;
 use takecell::TakeCell;
 use tokio::{
@@ -14,12 +13,9 @@ use tokio::{
 };
 use tokio_util::codec::{Decoder, FramedRead};
 
-use std::{
-    borrow::Cow, convert::Infallible, fmt, future::Future, io, iter, mem, path::PathBuf, pin::Pin,
-    sync::Arc, task,
-};
+use std::{borrow::Cow, fmt, io, iter, mem, path::PathBuf, pin::Pin, sync::Arc, task};
 
-use crate::types::InputSticker;
+use crate::{net::request::Multipart, types::InputSticker};
 
 /// This object represents the contents of a file to be uploaded.
 ///
@@ -193,38 +189,49 @@ impl Serialize for InputFile {
 // internal api
 
 impl InputFile {
-    pub(crate) fn into_part(mut self) -> Option<impl Future<Output = Part>> {
+    pub(crate) async fn add_to_multipart(mut self, multipart: &mut Multipart) {
         let filename = self.take_or_guess_filename();
+        let id = &self.id().to_owned();
 
         match self.inner {
             // Url and FileId are serialized just as strings, they don't need additional parts
-            Url(_) | FileId(_) => None,
+            Url(_) | FileId(_) => (),
 
             File(path_to_file) => {
-                let fut = async {
-                    let body = match tokio::fs::File::open(path_to_file).await {
-                        Ok(file) => {
-                            let file = FramedRead::new(file, BytesDecoder);
+                match tokio::fs::File::open(path_to_file).await {
+                    Ok(file) => {
+                        let file = FramedRead::new(file, BytesDecoder);
 
-                            Body::wrap_stream(file)
-                        }
-                        Err(err) => {
-                            // explicit type needed for `Bytes: From<?T>` in `wrap_stream`
-                            let err = Err::<Bytes, _>(err);
-                            Body::wrap_stream(stream::iter([err]))
-                        }
-                    };
-
-                    Part::stream(body).file_name(filename)
+                        multipart.add_stream(
+                            id,
+                            &filename.to_string(),
+                            &"".to_string(),
+                            Box::new(file),
+                        );
+                    }
+                    Err(err) => {
+                        // explicit type needed for `Bytes: From<?T>` in `wrap_stream`
+                        let err = Err::<Bytes, _>(err);
+                        multipart.add_stream(
+                            id,
+                            &filename.to_string(),
+                            &"".to_string(),
+                            Box::new(stream::iter([err])),
+                        );
+                    }
                 };
-
-                Some(Either::Left(fut))
             }
             Bytes(data) => {
-                let stream = Part::stream(data).file_name(filename);
-                Some(Either::Right(Either::Left(ready(stream))))
+                multipart.add_stream(
+                    id,
+                    &filename.to_string(),
+                    &"".to_string(),
+                    Box::new(once(ready(Ok(data)))),
+                );
             }
-            Read(read) => Some(Either::Right(Either::Right(read.into_part(filename)))),
+            Read(read) => {
+                read.add_to_multipart(id, filename, multipart).await;
+            }
         }
     }
 }
@@ -234,7 +241,7 @@ impl InputFile {
 #[derive(Clone)]
 struct Read {
     inner: Arc<TakeCell<dyn AsyncRead + Send + Unpin>>,
-    buf: Arc<OnceCell<Result<Vec<Bytes>, Arc<io::Error>>>>,
+    buf: OnceCell<Result<Vec<Bytes>, Arc<io::Error>>>,
     notify: Arc<watch::Sender<()>>,
     wait: watch::Receiver<()>,
 }
@@ -243,10 +250,15 @@ impl Read {
     fn new(it: Arc<TakeCell<dyn AsyncRead + Send + Unpin>>) -> Self {
         let (tx, rx) = watch::channel(());
 
-        Self { inner: it, buf: Arc::default(), notify: Arc::new(tx), wait: rx }
+        Self { inner: it, buf: OnceCell::default(), notify: Arc::new(tx), wait: rx }
     }
 
-    pub(crate) async fn into_part(mut self, filename: Cow<'static, str>) -> Part {
+    pub(crate) async fn add_to_multipart(
+        mut self,
+        id: &str,
+        filename: Cow<'static, str>,
+        multipart: &mut Multipart,
+    ) {
         if !self.inner.is_taken() {
             let res = ArcBox::<TakeCell<dyn AsyncRead + Send + Unpin>>::try_from(self.inner);
             match res {
@@ -255,8 +267,8 @@ impl Read {
                 Ok(arc_box) => {
                     let fr = FramedRead::new(ExclusiveArcAsyncRead(arc_box), BytesDecoder);
 
-                    let body = Body::wrap_stream(fr);
-                    return Part::stream(body).file_name(filename);
+                    multipart.add_stream(id, &filename, "", Box::new(fr));
+                    return;
                 }
                 // move the arc back into `self`
                 Err(i) => self.inner = i,
@@ -267,10 +279,17 @@ impl Read {
         // a buffer, or be the one who reads
         let body = self.into_shared_body().await;
 
-        Part::stream(body).file_name(filename)
+        multipart.add_stream(id, &filename, "", body);
     }
 
-    async fn into_shared_body(mut self) -> Body {
+    async fn into_shared_body(
+        mut self,
+    ) -> Box<
+        (dyn futures::Stream<Item = std::result::Result<bytes::Bytes, std::io::Error>>
+             + Unpin
+             + Send
+             + 'static),
+    > {
         match self.inner.take() {
             // Read `dyn AsyncRead` into a buffer
             Some(mut read_ref) => {
@@ -325,30 +344,27 @@ impl Read {
             None => {}
         };
 
-        let buf = self.buf;
         // unwrap: `OnceCell` is initialized in the match above before sending
         // notification, so at this point it's already initialized.
-        match buf.get().unwrap() {
-            Ok(_) => {
+        match self.buf.take().unwrap() {
+            Ok(buf) => {
                 // We can't use `.iter()` here, because the iterator must capture `buf`
                 let mut i = 0;
-                let iter = iter::from_fn(move || match buf.get().unwrap() {
-                    Ok(buf) if i >= buf.len() => None,
-                    Ok(buf) => {
+                let iter = iter::from_fn(move || match &buf {
+                    buf if i >= buf.len() => None,
+                    buf => {
                         let res = buf[i].clone();
                         i += 1;
-                        Some(Ok::<_, Infallible>(res))
+                        Some(Ok::<_, io::Error>(res))
                     }
-                    // We've just checked in the above match, it's `Ok(_)`
-                    Err(_) => unreachable!(),
                 });
 
-                Body::wrap_stream(stream::iter(iter))
+                Box::new(stream::iter(iter))
             }
 
             Err(err) => {
-                let err = Err::<Bytes, _>(Arc::clone(err));
-                Body::wrap_stream(stream::iter(iter::once(err)))
+                let err = Err::<Bytes, _>(io::Error::new(err.kind(), err));
+                Box::new(stream::iter(iter::once(err)))
             }
         }
     }

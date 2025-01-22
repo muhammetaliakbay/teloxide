@@ -4,7 +4,7 @@ use tokio::io::AsyncWrite;
 
 use crate::{
     bot::Bot,
-    net::{self, Download},
+    net::{self, client, Download},
     DownloadError,
 };
 
@@ -16,13 +16,13 @@ impl Download for Bot {
     type Fut<'dst> = BoxFuture<'dst, Result<(), Self::Err<'dst>>>;
 
     fn download_file<'dst>(
-        &self,
+        &'dst self,
         path: &str,
         destination: &'dst mut (dyn AsyncWrite + Unpin + Send),
     ) -> Self::Fut<'dst> {
         net::download_file(
-            &self.client,
-            reqwest::Url::clone(&*self.api_url),
+            self.client.as_ref(),
+            url::Url::clone(&*self.api_url),
             &self.token,
             path,
             destination,
@@ -30,14 +30,14 @@ impl Download for Bot {
         .boxed()
     }
 
-    type StreamErr = reqwest::Error;
+    type StreamErr = client::Error;
 
-    type Stream = BoxStream<'static, Result<Bytes, Self::StreamErr>>;
+    type Stream<'dst> = BoxStream<'dst, Result<Bytes, Self::StreamErr>>;
 
-    fn download_file_stream(&self, path: &str) -> Self::Stream {
+    fn download_file_stream<'dst>(&'dst self, path: &str) -> Self::Stream<'dst> {
         net::download_file_stream(
-            &self.client,
-            reqwest::Url::clone(&*self.api_url),
+            self.client.as_ref(),
+            url::Url::clone(&*self.api_url),
             &self.token,
             path,
         )

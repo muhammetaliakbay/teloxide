@@ -1,23 +1,28 @@
 use std::future::Future;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{
     future::{ready, Either},
     stream::{once, unfold},
     FutureExt, Stream, StreamExt,
 };
-use reqwest::{Client, Response, Url};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite};
 
 use crate::{errors::DownloadError, net::file_url};
+
+use super::client::{self, Client, Request};
 
 /// A trait for downloading files from Telegram.
 pub trait Download {
     /// An error returned from [`download_file`](Self::download_file).
-    type Err<'dst>;
+    type Err<'dst>
+    where
+        Self: 'dst;
 
     /// A future returned from [`download_file`](Self::download_file).
-    type Fut<'dst>: Future<Output = Result<(), Self::Err<'dst>>> + Send;
+    type Fut<'dst>: Future<Output = Result<(), Self::Err<'dst>>> + Send
+    where
+        Self: 'dst;
 
     // NOTE: We currently only allow borrowing `dst` in the future,
     //       however we could also allow borrowing `self` or `path`.
@@ -53,7 +58,7 @@ pub trait Download {
     /// [`GetFile`]: crate::payloads::GetFile
     /// [`download_file_stream`]: Self::download_file_stream
     fn download_file<'dst>(
-        &self,
+        &'dst self,
         path: &str,
         destination: &'dst mut (dyn AsyncWrite + Unpin + Send),
     ) -> Self::Fut<'dst>;
@@ -65,7 +70,9 @@ pub trait Download {
     /// A stream returned from [`download_file_stream`].
     ///
     ///[`download_file_stream`]: (Self::download_file_stream)
-    type Stream: Stream<Item = Result<Bytes, Self::StreamErr>> + Send;
+    type Stream<'dst>: Stream<Item = Result<Bytes, Self::StreamErr>> + Send + 'dst
+    where
+        Self: 'dst;
 
     /// Download a file from Telegram as [`Stream`].
     ///
@@ -78,7 +85,7 @@ pub trait Download {
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
     /// [`tokio::fs::File`]: tokio::fs::File
     /// [`download_file`]: Self::download_file
-    fn download_file_stream(&self, path: &str) -> Self::Stream;
+    fn download_file_stream<'dst>(&'dst self, path: &str) -> Self::Stream<'dst>;
 }
 
 /// Download a file from Telegram into `dst`.
@@ -87,8 +94,8 @@ pub trait Download {
 /// don't need to get *all* performance (and you don't, c'mon it's very io-bound
 /// job), then it's recommended to use [`Download::download_file`].
 pub fn download_file<'o, D>(
-    client: &Client,
-    api_url: Url,
+    client: &'o dyn Client,
+    api_url: url::Url,
     token: &str,
     path: &str,
     dst: &'o mut D,
@@ -96,15 +103,12 @@ pub fn download_file<'o, D>(
 where
     D: ?Sized + AsyncWrite + Unpin,
 {
-    client.get(file_url(api_url, token, path)).send().then(move |r| async move {
-        let mut res = r?.error_for_status()?;
-
-        while let Some(chunk) = res.chunk().await? {
-            dst.write_all(&chunk).await?;
-        }
-
-        Ok(())
-    })
+    client.send(Request::get(file_url(api_url, token, path)).build().unwrap()).then(
+        move |r| async move {
+            tokio::io::copy(r?.body(), dst).await?;
+            Ok(())
+        },
+    )
 }
 
 /// Download a file from Telegram as [`Stream`].
@@ -112,19 +116,23 @@ where
 /// Note: if you don't need to use a different (from you're bot) client and
 /// don't need to get *all* performance (and you don't, c'mon it's very io-bound
 /// job), then it's recommended to use [`Download::download_file_stream`].
-pub fn download_file_stream(
-    client: &Client,
-    api_url: Url,
+pub fn download_file_stream<'c>(
+    client: &'c dyn Client,
+    api_url: url::Url,
     token: &str,
     path: &str,
-) -> impl Stream<Item = reqwest::Result<Bytes>> + 'static {
-    client.get(file_url(api_url, token, path)).send().into_stream().flat_map(|res| {
-        match res.and_then(Response::error_for_status) {
-            Ok(res) => Either::Left(unfold(res, |mut res| async {
-                match res.chunk().await {
-                    Err(err) => Some((Err(err), res)),
-                    Ok(Some(c)) => Some((Ok(c), res)),
-                    Ok(None) => None,
+) -> impl Stream<Item = Result<Bytes, client::Error>> + 'c {
+    let url = file_url(api_url, token, path);
+    client.send(Request::get(url.clone()).build().unwrap()).into_stream().flat_map(move |res| {
+        match res {
+            Ok(res) => Either::Left(unfold((res, url.clone()), move |(mut res, url)| async {
+                let mut buffer = BytesMut::with_capacity(1024);
+                match res.body().read_buf(&mut buffer).await {
+                    Err(err) => Some((
+                        Err(client::Error { source: Box::new(err), url: Some(url.clone()) }),
+                        (res, url),
+                    )),
+                    Ok(_) => Some((Ok(buffer.freeze()), (res, url))),
                 }
             })),
             Err(err) => Either::Right(once(ready(Err(err)))),

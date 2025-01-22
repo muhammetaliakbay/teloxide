@@ -429,8 +429,8 @@ pub(crate) mod serde_date_from_unix_timestamp {
 }
 
 pub(crate) mod option_url_from_string {
-    use reqwest::Url;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use url::Url;
 
     pub(crate) fn serialize<S>(this: &Option<Url>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -446,7 +446,7 @@ pub(crate) mod option_url_from_string {
     where
         D: Deserializer<'de>,
     {
-        Ok(reqwest::Url::deserialize(deserializer).ok())
+        Ok(url::Url::deserialize(deserializer).ok())
     }
 
     #[test]

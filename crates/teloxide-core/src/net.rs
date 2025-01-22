@@ -1,7 +1,5 @@
 //! Network-specific API.
 
-use std::time::Duration;
-
 pub use self::download::{download_file, download_file_stream, Download};
 
 pub(crate) use self::{
@@ -9,8 +7,11 @@ pub(crate) use self::{
     telegram_response::TelegramResponse,
 };
 
+pub mod client;
 mod download;
-mod request;
+pub(crate) mod request;
+#[cfg(feature = "reqwest")]
+pub mod reqwest_ext;
 mod telegram_response;
 
 /// The default Telegram API URL.
@@ -34,6 +35,7 @@ pub const TELEGRAM_API_URL: &str = "https://api.telegram.org";
 /// ## Panics
 ///
 /// If `TELOXIDE_PROXY` exists, but isn't correct url.
+#[cfg(feature = "reqwest")]
 #[must_use]
 pub fn client_from_env() -> reqwest::Client {
     use reqwest::Proxy;
@@ -69,7 +71,10 @@ pub fn client_from_env() -> reqwest::Client {
 ///    guaranteed to work over long time durations.
 ///
 /// [issue 223]: https://github.com/teloxide/teloxide/issues/223
+#[cfg(feature = "reqwest")]
 pub fn default_reqwest_settings() -> reqwest::ClientBuilder {
+    use std::time::Duration;
+
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(17))
@@ -79,14 +84,14 @@ pub fn default_reqwest_settings() -> reqwest::ClientBuilder {
 /// Creates URL for making HTTPS requests. See the [Telegram documentation].
 ///
 /// [Telegram documentation]: https://core.telegram.org/bots/api#making-requests
-fn method_url(base: reqwest::Url, token: &str, method_name: &str) -> reqwest::Url {
+fn method_url(base: url::Url, token: &str, method_name: &str) -> url::Url {
     base.join(&format!("/bot{token}/{method_name}")).expect("failed to format url")
 }
 
 /// Creates URL for downloading a file. See the [Telegram documentation].
 ///
 /// [Telegram documentation]: https://core.telegram.org/bots/api#file
-fn file_url(base: reqwest::Url, token: &str, file_path: &str) -> reqwest::Url {
+fn file_url(base: url::Url, token: &str, file_path: &str) -> url::Url {
     base.join(&format!("file/bot{token}/{file_path}")).expect("failed to format url")
 }
 
@@ -97,7 +102,7 @@ mod tests {
     #[test]
     fn method_url_test() {
         let url = method_url(
-            reqwest::Url::parse(TELEGRAM_API_URL).unwrap(),
+            url::Url::parse(TELEGRAM_API_URL).unwrap(),
             "535362388:AAF7-g0gYncWnm5IyfZlpPRqRRv6kNAGlao",
             "methodName",
         );
@@ -111,7 +116,7 @@ mod tests {
     #[test]
     fn file_url_test() {
         let url = file_url(
-            reqwest::Url::parse(TELEGRAM_API_URL).unwrap(),
+            url::Url::parse(TELEGRAM_API_URL).unwrap(),
             "535362388:AAF7-g0gYncWnm5IyfZlpPRqRRv6kNAGlao",
             "AgADAgADyqoxG2g8aEsu_KjjVsGF4-zetw8ABAEAAwIAA20AA_8QAwABFgQ",
         );

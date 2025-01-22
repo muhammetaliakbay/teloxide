@@ -16,7 +16,7 @@ pub struct InlineQueryResultGif {
     pub id: String,
 
     /// A valid URL for the GIF file. File size must not exceed 1MB.
-    pub gif_url: reqwest::Url,
+    pub gif_url: url::Url,
 
     /// Width of the GIF.
     pub gif_width: Option<u32>,
@@ -29,7 +29,7 @@ pub struct InlineQueryResultGif {
 
     /// URL of the static (JPEG or GIF) or animated (MPEG4) thumbnail for the
     /// result
-    pub thumbnail_url: reqwest::Url,
+    pub thumbnail_url: url::Url,
 
     // FIXME: maybe make dedicated enum for the mime type?
     /// MIME type of the thumbnail, must be one of “image/jpeg”,
@@ -64,7 +64,7 @@ pub struct InlineQueryResultGif {
 }
 
 impl InlineQueryResultGif {
-    pub fn new<S>(id: S, gif_url: reqwest::Url, thumbnail_url: reqwest::Url) -> Self
+    pub fn new<S>(id: S, gif_url: url::Url, thumbnail_url: url::Url) -> Self
     where
         S: Into<String>,
     {
@@ -94,7 +94,7 @@ impl InlineQueryResultGif {
     }
 
     #[must_use]
-    pub fn gif_url(mut self, val: reqwest::Url) -> Self {
+    pub fn gif_url(mut self, val: url::Url) -> Self {
         self.gif_url = val;
         self
     }
@@ -118,7 +118,7 @@ impl InlineQueryResultGif {
     }
 
     #[must_use]
-    pub fn thumbnail_url(mut self, val: reqwest::Url) -> Self {
+    pub fn thumbnail_url(mut self, val: url::Url) -> Self {
         self.thumbnail_url = val;
         self
     }

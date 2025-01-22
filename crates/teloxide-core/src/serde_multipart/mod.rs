@@ -15,17 +15,16 @@ mod serializers;
 
 use std::future::Future;
 
-use reqwest::multipart::Form;
 use serde::Serialize;
 
-use crate::requests::MultipartPayload;
+use crate::{net::request::Multipart, requests::MultipartPayload};
 use error::Error;
 use serializers::MultipartSerializer;
 
 /// Serializes given value into [`Form`] **taking all input files out**.
 ///
 /// [`Form`]:  reqwest::multipart::Form
-pub(crate) fn to_form<T>(val: &mut T) -> Result<impl Future<Output = Form>, Error>
+pub(crate) fn to_form<T>(val: &mut T) -> Result<impl Future<Output = Multipart>, Error>
 where
     T: Serialize + MultipartPayload,
 {
@@ -38,10 +37,7 @@ where
     let fut = async move {
         for file in iter {
             if file.needs_attach() {
-                let id = file.id().to_owned();
-                if let Some(part) = file.into_part() {
-                    form = form.part(id, part.await);
-                }
+                file.add_to_multipart(&mut form).await;
             }
         }
 
@@ -54,7 +50,7 @@ where
 /// Serializes given value into [`Form`].
 ///
 /// [`Form`]:  reqwest::multipart::Form
-pub(crate) fn to_form_ref<T: ?Sized>(val: &T) -> Result<impl Future<Output = Form>, Error>
+pub(crate) fn to_form_ref<T: ?Sized>(val: &T) -> Result<impl Future<Output = Multipart>, Error>
 where
     T: Serialize + MultipartPayload,
 {
@@ -67,10 +63,7 @@ where
     let fut = async move {
         for file in iter {
             if file.needs_attach() {
-                let id = file.id().to_owned();
-                if let Some(part) = file.into_part() {
-                    form = form.part(id, part.await);
-                }
+                file.add_to_multipart(&mut form).await;
             }
         }
 

@@ -1,17 +1,16 @@
-use crate::serde_multipart::error::Error;
+use crate::{net::request::Multipart, serde_multipart::error::Error};
 
-use reqwest::multipart::{Form, Part};
 use serde::{
     ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct},
     Serialize, Serializer,
 };
 
 /// The main serializer that serializes top-level and structures
-pub(super) struct MultipartSerializer(Form);
+pub(super) struct MultipartSerializer(Multipart);
 
 /// Serializer for maps (support for `#[serde(flatten)]`)
 pub(super) struct MultipartMapSerializer {
-    form: Form,
+    form: Multipart,
     key: Option<String>,
 }
 
@@ -40,12 +39,12 @@ enum PartSerializerStructState {
 
 impl MultipartSerializer {
     pub(super) fn new() -> Self {
-        Self(Form::new())
+        Self(Multipart::default())
     }
 }
 
 impl Serializer for MultipartSerializer {
-    type Ok = Form;
+    type Ok = Multipart;
     type Error = Error;
 
     // for `serde(flatten)` (e.g.: in CreateNewStickerSet)
@@ -62,7 +61,7 @@ impl Serializer for MultipartSerializer {
     type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
     fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Ok(MultipartMapSerializer { form: Form::new(), key: None })
+        Ok(MultipartMapSerializer { form: Multipart::default(), key: None })
     }
 
     fn serialize_struct(
@@ -222,7 +221,7 @@ impl Serializer for MultipartSerializer {
 }
 
 impl SerializeStruct for MultipartSerializer {
-    type Ok = Form;
+    type Ok = Multipart;
     type Error = Error;
 
     fn serialize_field<T: ?Sized>(
@@ -233,8 +232,8 @@ impl SerializeStruct for MultipartSerializer {
     where
         T: Serialize,
     {
-        let part = value.serialize(PartSerializer {})?;
-        take_mut::take(&mut self.0, |f| f.part(key, part));
+        let Part::Text(part) = value.serialize(PartSerializer {})?;
+        self.0.add_field(key, &part);
 
         Ok(())
     }
@@ -245,7 +244,7 @@ impl SerializeStruct for MultipartSerializer {
 }
 
 impl SerializeMap for MultipartMapSerializer {
-    type Ok = Form;
+    type Ok = Multipart;
     type Error = Error;
 
     fn serialize_key<T: ?Sized>(&mut self, key: &T) -> Result<(), Self::Error>
@@ -265,15 +264,20 @@ impl SerializeMap for MultipartMapSerializer {
     {
         let key = self.key.take().expect("Value serialized before key or key is not string");
 
-        let part = value.serialize(PartSerializer {})?;
+        let Part::Text(part) = value.serialize(PartSerializer {})?;
 
-        take_mut::take(&mut self.form, |f| f.part(key, part));
+        self.form.add_field(&key, &part);
+
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         Ok(self.form)
     }
+}
+
+pub enum Part {
+    Text(String),
 }
 
 impl Serializer for PartSerializer {
@@ -291,59 +295,61 @@ impl Serializer for PartSerializer {
     type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
     fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_string()))
+        Ok(Part::Text(v.to_string()))
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(v.to_owned()))
+        Ok(Part::Text(v.to_owned()))
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::bytes(v.to_owned()))
+        Ok(Part::Text(
+            String::from_utf8(v.to_owned()).map_err(|err| Error::Custom(err.to_string()))?,
+        ))
     }
 
     fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
@@ -359,7 +365,7 @@ impl Serializer for PartSerializer {
         _: u32,
         variant_name: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Ok(Part::text(variant_name))
+        Ok(Part::Text(variant_name.to_owned()))
     }
 
     fn serialize_struct(
@@ -484,11 +490,11 @@ impl SerializeStruct for JsonPartSerializer {
         use PartSerializerStructState::*;
 
         match self.state {
-            Empty => Ok(Part::text("{{}}")),
+            Empty => Ok(Part::Text("{{}}".into())),
             Rest => {
                 self.buf += "}";
 
-                Ok(Part::text(self.buf))
+                Ok(Part::Text(self.buf))
             }
         }
     }
@@ -523,11 +529,11 @@ impl SerializeSeq for JsonPartSerializer {
         use PartSerializerStructState::*;
 
         match self.state {
-            Empty => Ok(Part::text("[]")),
+            Empty => Ok(Part::Text("[]".into())),
             Rest => {
                 self.buf += "]";
 
-                Ok(Part::text(self.buf))
+                Ok(Part::Text(self.buf))
             }
         }
     }

@@ -13,7 +13,7 @@ use crate::types::AllowedUpdate;
 pub struct WebhookInfo {
     /// Webhook URL, `None` if webhook is not set up.
     #[serde(with = "crate::types::option_url_from_string")]
-    pub url: Option<reqwest::Url>,
+    pub url: Option<url::Url>,
 
     /// `true`, if a custom certificate was provided for webhook certificate
     /// checks.

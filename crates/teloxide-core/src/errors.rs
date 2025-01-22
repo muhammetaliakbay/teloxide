@@ -1,10 +1,13 @@
 //! Possible error types.
 
-use std::io;
+use std::{io, str::Utf8Error};
 
 use thiserror::Error;
 
-use crate::types::{ChatId, ResponseParameters, Seconds};
+use crate::{
+    net::client,
+    types::{ChatId, ResponseParameters, Seconds},
+};
 
 /// An error caused by sending a request to Telegram.
 #[derive(Debug, Error)]
@@ -26,7 +29,7 @@ pub enum RequestError {
     /// Network error while sending a request to Telegram.
     #[error("A network error: {0}")]
     // NOTE: this variant must not be created by anything except the explicit From impl
-    Network(#[source] reqwest::Error),
+    Network(#[source] client::Error),
 
     /// Error while parsing a response from Telegram.
     ///
@@ -42,6 +45,14 @@ pub enum RequestError {
         raw: Box<str>,
     },
 
+    #[error("An error while parsing JSON: {source} (raw: {raw:?})")]
+    InvalidUTF8 {
+        #[source]
+        source: Utf8Error,
+        /// The raw string JSON that couldn't been parsed
+        raw: Vec<u8>,
+    },
+
     /// Occurs when trying to send a file to Telegram.
     #[error("An I/O error: {0}")]
     Io(#[from] io::Error),
@@ -53,7 +64,7 @@ pub enum DownloadError {
     /// A network error while downloading a file from Telegram.
     #[error("A network error: {0}")]
     // NOTE: this variant must not be created by anything except the explicit From impl
-    Network(#[source] reqwest::Error),
+    Network(#[source] client::Error),
 
     /// An I/O error while writing a file to destination.
     #[error("An I/O error: {0}")]
@@ -756,21 +767,21 @@ impl From<DownloadError> for RequestError {
     }
 }
 
-impl From<reqwest::Error> for DownloadError {
-    fn from(error: reqwest::Error) -> Self {
+impl From<client::Error> for DownloadError {
+    fn from(error: client::Error) -> Self {
         DownloadError::Network(hide_token(error))
     }
 }
 
-impl From<reqwest::Error> for RequestError {
-    fn from(error: reqwest::Error) -> Self {
+impl From<client::Error> for RequestError {
+    fn from(error: client::Error) -> Self {
         RequestError::Network(hide_token(error))
     }
 }
 
 /// Replaces token in the url in the error with `token:redacted` string.
-pub(crate) fn hide_token(mut error: reqwest::Error) -> reqwest::Error {
-    let url = match error.url_mut() {
+pub(crate) fn hide_token(mut error: client::Error) -> client::Error {
+    let url = match &mut error.url {
         Some(url) => url,
         None => return error,
     };

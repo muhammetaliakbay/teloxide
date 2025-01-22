@@ -1,10 +1,9 @@
 use std::{future::Future, sync::Arc};
 
-use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    net,
+    net::{self, client::Client},
     requests::{MultipartPayload, Payload, ResponseResult},
     serde_multipart,
 };
@@ -56,8 +55,8 @@ const TELOXIDE_API_URL: &str = "TELOXIDE_API_URL";
 #[derive(Debug, Clone)]
 pub struct Bot {
     token: Arc<str>,
-    api_url: Arc<reqwest::Url>,
-    client: Client,
+    api_url: Arc<url::Url>,
+    client: Arc<dyn Client>,
 }
 
 /// Constructors
@@ -68,6 +67,7 @@ impl Bot {
     /// # Panics
     ///
     /// If it cannot create [`reqwest::Client`].
+    #[cfg(feature = "reqwest")]
     pub fn new<S>(token: S) -> Self
     where
         S: Into<String>,
@@ -87,14 +87,14 @@ impl Bot {
     ///
     /// [`reqwest::Client`]: https://docs.rs/reqwest/latest/reqwest/struct.Client.html
     /// [issue 223]: https://github.com/teloxide/teloxide/issues/223
-    pub fn with_client<S>(token: S, client: Client) -> Self
+    pub fn with_client<S, C: Client + 'static>(token: S, client: C) -> Self
     where
         S: Into<String>,
     {
         let token = Into::<String>::into(token).into();
+        let client = Arc::new(client);
         let api_url = Arc::new(
-            reqwest::Url::parse(net::TELEGRAM_API_URL)
-                .expect("Failed to parse the default TBA URL"),
+            url::Url::parse(net::TELEGRAM_API_URL).expect("Failed to parse the default TBA URL"),
         );
 
         Self { token, api_url, client }
@@ -117,6 +117,7 @@ impl Bot {
     ///
     /// [`reqwest::Client`]: https://docs.rs/reqwest/0.10.1/reqwest/struct.Client.html
     /// [`reqwest::Proxy::all`]: https://docs.rs/reqwest/latest/reqwest/struct.Proxy.html#method.all
+    #[cfg(feature = "reqwest")]
     pub fn from_env() -> Self {
         Self::from_env_with_client(crate::net::client_from_env())
     }
@@ -137,12 +138,12 @@ impl Bot {
     ///
     /// [`reqwest::Client`]: https://docs.rs/reqwest/0.10.1/reqwest/struct.Client.html
     /// [issue 223]: https://github.com/teloxide/teloxide/issues/223
-    pub fn from_env_with_client(client: Client) -> Self {
+    pub fn from_env_with_client<C: Client + 'static>(client: C) -> Self {
         let bot = Self::with_client(get_env(TELOXIDE_TOKEN), client);
 
         match std::env::var(TELOXIDE_API_URL) {
             Ok(env_api_url) => {
-                let api_url = reqwest::Url::parse(&env_api_url)
+                let api_url = url::Url::parse(&env_api_url)
                     .expect("Failed to parse the `TELOXIDE_API_URL` env variable");
                 bot.set_api_url(api_url)
             }
@@ -189,7 +190,7 @@ impl Bot {
     /// assert_eq!(bot.clone().api_url().as_str(), "https://example.com/");
     /// assert_ne!(bot2.api_url().as_str(), "https://example.com/");
     /// ```
-    pub fn set_api_url(mut self, url: reqwest::Url) -> Self {
+    pub fn set_api_url(mut self, url: url::Url) -> Self {
         self.api_url = Arc::new(url);
         self
     }
@@ -205,14 +206,14 @@ impl Bot {
 
     /// Returns currently used http-client.
     #[must_use]
-    pub fn client(&self) -> &Client {
-        &self.client
+    pub fn client(&self) -> Arc<dyn Client> {
+        self.client.clone()
     }
 
     /// Returns currently used token API URL.
     #[must_use]
-    pub fn api_url(&self) -> reqwest::Url {
-        reqwest::Url::clone(&*self.api_url)
+    pub fn api_url(&self) -> url::Url {
+        url::Url::clone(&*self.api_url)
     }
 }
 
@@ -237,9 +238,9 @@ impl Bot {
         // async move to capture client&token&api_url&params
         async move {
             net::request_json(
-                &client,
+                client.as_ref(),
                 token.as_ref(),
-                reqwest::Url::clone(&*api_url),
+                url::Url::clone(&*api_url),
                 P::NAME,
                 params,
                 timeout_hint,
@@ -267,9 +268,9 @@ impl Bot {
         async move {
             let params = params?.await;
             net::request_multipart(
-                &client,
+                client.as_ref(),
                 token.as_ref(),
-                reqwest::Url::clone(&*api_url),
+                url::Url::clone(&*api_url),
                 P::NAME,
                 params,
                 timeout_hint,
@@ -297,9 +298,9 @@ impl Bot {
         async move {
             let params = params?.await;
             net::request_multipart(
-                &client,
+                client.as_ref(),
                 token.as_ref(),
-                reqwest::Url::clone(&*api_url),
+                url::Url::clone(&*api_url),
                 P::NAME,
                 params,
                 timeout_hint,

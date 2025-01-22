@@ -374,12 +374,12 @@ macro_rules! impl_payload {
 macro_rules! download_forward {
     ($T:ident $S:ty {$this:ident => $inner:expr}) => {
         impl<$T: $crate::net::Download> $crate::net::Download for $S {
-            type Err<'dst> = <$T as $crate::net::Download>::Err<'dst>;
+            type Err<'dst> = <$T as $crate::net::Download>::Err<'dst> where $T: 'dst;
 
-            type Fut<'dst> = <$T as $crate::net::Download>::Fut<'dst>;
+            type Fut<'dst> = <$T as $crate::net::Download>::Fut<'dst> where $T: 'dst;
 
             fn download_file<'dst>(
-                &self,
+                &'dst self,
                 path: &str,
                 destination: &'dst mut (dyn tokio::io::AsyncWrite
                                + core::marker::Unpin
@@ -391,9 +391,9 @@ macro_rules! download_forward {
 
             type StreamErr = <$T as $crate::net::Download>::StreamErr;
 
-            type Stream = <$T as $crate::net::Download>::Stream;
+            type Stream<'dst> = <$T as $crate::net::Download>::Stream<'dst> where $T: 'dst;
 
-            fn download_file_stream(&self, path: &str) -> Self::Stream {
+            fn download_file_stream<'dst>(&'dst self, path: &str) -> Self::Stream<'dst> {
                 let $this = self;
                 ($inner).download_file_stream(path)
             }

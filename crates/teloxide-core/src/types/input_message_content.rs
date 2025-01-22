@@ -1,4 +1,3 @@
-use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{LabeledPrice, LinkPreviewOptions, MessageEntity, ParseMode};
@@ -361,7 +360,7 @@ pub struct InputMessageContentInvoice {
     /// URL of the product photo for the invoice. Can be a photo of the goods or
     /// a marketing image for a service. People like it better when they see
     /// what they are paying for.
-    pub photo_url: Option<Url>,
+    pub photo_url: Option<url::Url>,
 
     /// Photo size
     pub photo_size: Option<u32>,
@@ -517,7 +516,7 @@ impl InputMessageContentInvoice {
     }
 
     #[must_use]
-    pub fn photo_url(mut self, val: Url) -> Self {
+    pub fn photo_url(mut self, val: url::Url) -> Self {
         self.photo_url = Some(val);
         self
     }

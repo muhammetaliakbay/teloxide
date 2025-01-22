@@ -1,21 +1,26 @@
 use std::{any::TypeId, time::Duration};
 
-use reqwest::{
-    header::{HeaderValue, CONTENT_TYPE},
-    Client, Response,
-};
+use bytes::Bytes;
+use futures::{future::ready, stream::once, Stream};
+use mpart_async::client::MultipartRequest;
 use serde::de::DeserializeOwned;
+use tokio_util::io::StreamReader;
 
 use crate::{net::TelegramResponse, requests::ResponseResult, RequestError};
 
+use super::client::{self, Client, Request};
+
 const DELAY_ON_SERVER_ERROR: Duration = Duration::from_secs(10);
 
+pub type Multipart =
+    MultipartRequest<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Unpin + Send>>;
+
 pub async fn request_multipart<T>(
-    client: &Client,
+    client: &dyn Client,
     token: &str,
-    api_url: reqwest::Url,
+    api_url: url::Url,
     method_name: &str,
-    params: reqwest::multipart::Form,
+    params: Multipart,
     _timeout_hint: Option<Duration>,
 ) -> ResponseResult<T>
 where
@@ -34,25 +39,31 @@ where
     // [#460]: https://github.com/teloxide/teloxide/issues/460
     let method_name = method_name.trim_end_matches("Inline");
 
-    let request = client
-        .post(crate::net::method_url(api_url, token, method_name))
-        .multipart(params)
-        .build()?;
+    let content_type = format!("multipart/form-data; boundary={}", params.get_boundary());
+    let params = StreamReader::new(params);
+
+    let response = client
+        .send(
+            Request::post(crate::net::method_url(api_url, token, method_name))
+                .header("Content-Type".to_string(), content_type)
+                .body(Box::new(params))
+                .build()
+                .unwrap(),
+        )
+        .await;
 
     // FIXME: uncomment this, when reqwest starts setting default timeout early
     // if let Some(timeout) = timeout_hint {
     //     *request.timeout_mut().get_or_insert(Duration::ZERO) += timeout;
     // }
 
-    let response = client.execute(request).await?;
-
     process_response(response).await
 }
 
 pub async fn request_json<T>(
-    client: &Client,
+    client: &dyn Client,
     token: &str,
-    api_url: reqwest::Url,
+    api_url: url::Url,
     method_name: &str,
     params: Vec<u8>,
     _timeout_hint: Option<Duration>,
@@ -73,33 +84,44 @@ where
     // [#460]: https://github.com/teloxide/teloxide/issues/460
     let method_name = method_name.trim_end_matches("Inline");
 
-    let request = client
-        .post(crate::net::method_url(api_url, token, method_name))
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .body(params)
-        .build()?;
+    let params =
+        StreamReader::new(once(ready(Result::<Bytes, std::io::Error>::Ok(Bytes::from(params)))));
+
+    let response = client
+        .send(
+            Request::post(crate::net::method_url(api_url, token, method_name))
+                .header("Content-Type".to_string(), "application/json".to_string())
+                .body(Box::new(params))
+                .build()
+                .unwrap(),
+        )
+        .await;
 
     // FIXME: uncomment this, when reqwest starts setting default timeout early
     // if let Some(timeout) = timeout_hint {
     //     *request.timeout_mut().get_or_insert(Duration::ZERO) += timeout;
     // }
 
-    let response = client.execute(request).await?;
-
     process_response(response).await
 }
 
-async fn process_response<T>(response: Response) -> ResponseResult<T>
+async fn process_response<T>(response: client::Result) -> ResponseResult<T>
 where
     T: DeserializeOwned + 'static,
 {
-    if response.status().is_server_error() {
-        tokio::time::sleep(DELAY_ON_SERVER_ERROR).await;
+    match response {
+        Ok(mut response) => {
+            let mut body = Vec::with_capacity(1024);
+            tokio::io::copy(response.body(), &mut body).await?;
+            Ok(deserialize_response(String::from_utf8(body).map_err(|err| {
+                RequestError::InvalidUTF8 { source: err.utf8_error(), raw: err.into_bytes() }
+            })?)?)
+        }
+        Err(error) => {
+            tokio::time::sleep(DELAY_ON_SERVER_ERROR).await;
+            Err(RequestError::Network(error))
+        }
     }
-
-    let text = response.text().await?;
-
-    deserialize_response(text)
 }
 
 fn deserialize_response<T>(text: String) -> Result<T, RequestError>

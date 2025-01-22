@@ -52,7 +52,7 @@ pub trait RequesterExt: Requester {
     #[must_use]
     fn throttle(self, limits: Limits) -> Throttle<Self>
     where
-        Self: Sized + Clone + Send + Sync + 'static,
+        Self: Sized + Clone + Send + 'static,
         Self::Err: crate::errors::AsResponseParameters,
         Self::GetChat: Send,
     {

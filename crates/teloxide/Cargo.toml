@@ -18,7 +18,9 @@ categories = ["web-programming", "api-bindings", "asynchronous"]
 
 
 [features]
-default = ["native-tls", "ctrlc_handler", "teloxide-core/default"]
+default = ["native-tls", "ctrlc_handler", "teloxide-core/default", "reqwest"]
+
+reqwest = ["teloxide-core/reqwest"]
 
 webhooks = ["rand"]
 webhooks-axum = ["webhooks", "axum", "tower", "tower-http"]
@@ -73,6 +75,7 @@ full = [
     "cache-me",
     "trace-adaptor",
     "erased",
+    "reqwest",
 ]
 
 
