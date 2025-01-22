@@ -6,4 +6,5 @@ pub mod markdown;
 pub mod render;
 pub(crate) mod shutdown_token;
 
+#[cfg(feature = "reqwest")]
 pub use teloxide_core::net::client_from_env;
