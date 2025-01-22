@@ -10,7 +10,7 @@ pub type Result = std::result::Result<Box<dyn Response>, Error>;
 
 #[derive(Debug)]
 pub struct Error {
-    pub source: Box<dyn std::error::Error + Send>,
+    pub source: Box<dyn std::error::Error + Send + Sync>,
     pub url: Option<url::Url>,
 }
 
