@@ -84,6 +84,7 @@ where
     // [#460]: https://github.com/teloxide/teloxide/issues/460
     let method_name = method_name.trim_end_matches("Inline");
 
+    let params_len = params.len();
     let params =
         StreamReader::new(once(ready(Result::<Bytes, std::io::Error>::Ok(Bytes::from(params)))));
 
@@ -91,6 +92,7 @@ where
         .send(
             Request::post(crate::net::method_url(api_url, token, method_name))
                 .header("Content-Type".to_string(), "application/json".to_string())
+                .header("Content-Length".to_string(), params_len.to_string())
                 .body(Box::new(params))
                 .build()
                 .unwrap(),
